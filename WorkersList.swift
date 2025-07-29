@@ -3,11 +3,37 @@ import Combine
 
 
 
-struct Worker: Codable, Identifiable {
+/// Representation of a worker returned by the backend
+struct Worker: Decodable, Identifiable {
     let userID: Int
     let userName: String
     var locationName: String?
+
     var id: Int { userID }
+
+    enum CodingKeys: String, CodingKey {
+        case userID   = "userId"
+        case userName = "name"
+        case currentLocation
+    }
+
+    enum LocationKeys: String, CodingKey {
+        case locationId
+        case locationName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userID   = try container.decode(Int.self, forKey: .userID)
+        userName = try container.decode(String.self, forKey: .userName)
+
+        if let loc = try? container.nestedContainer(keyedBy: LocationKeys.self,
+                                                     forKey: .currentLocation) {
+            locationName = try loc.decode(String.self, forKey: .locationName)
+        } else {
+            locationName = nil
+        }
+    }
 }
 
 enum SortOption: String, CaseIterable, Identifiable {
@@ -16,11 +42,14 @@ enum SortOption: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-// J json decoder
-func decodeMitarbeiter() -> [Worker] {
-    let url  = Bundle.main.url(forResource: "Mitarbeiter", withExtension: "json")!
-    let data = try! Data(contentsOf: url)
-    return try! JSONDecoder().decode([Worker].self, from: data)
+
+// Backend host helper for simulator vs. device
+private var backendHost: String {
+    #if targetEnvironment(simulator)
+    return "localhost"
+    #else
+    return "172.16.42.23"
+    #endif
 }
 
 
@@ -56,8 +85,29 @@ final class WorkersListViewModel: ObservableObject {
     init() {
         loadWorkers()
     }
-    
+
     private func loadWorkers() {
-        allWorkers = decodeMitarbeiter()
+        guard let url = URL(string: "http://\(backendHost):3000/web/all-user-current-location") else {
+            print("Ungültige URL")
+            return
+        }
+
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            DispatchQueue.main.async {
+                if let err = error {
+                    print("Fehler beim Laden:", err.localizedDescription)
+                    return
+                }
+                guard let data = data else {
+                    print("Keine Daten erhalten")
+                    return
+                }
+                do {
+                    self.allWorkers = try JSONDecoder().decode([Worker].self, from: data)
+                } catch {
+                    print("Fehler beim Decodieren:", error.localizedDescription)
+                }
+            }
+        }.resume()
     }
 }
